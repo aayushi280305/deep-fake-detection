@@ -1,14 +1,24 @@
 import streamlit as st
 import yt_dlp
 import tempfile
-import os
+import cv2
+import numpy as np
+from tensorflow.keras.models import load_model
 
 st.set_page_config(page_title="Deepfake Detector", layout="centered")
-
 st.title("🛡️ Deepfake Video Detector")
 
 # -------------------------------
-# YouTube download function
+# LOAD MODEL (only once)
+# -------------------------------
+@st.cache_resource
+def load_my_model():
+    return load_model("model.h5")   # 🔁 change if your model name is different
+
+model = load_my_model()
+
+# -------------------------------
+# YOUTUBE DOWNLOAD FUNCTION
 # -------------------------------
 def download_youtube_video(url):
 
@@ -20,7 +30,6 @@ def download_youtube_video(url):
         'outtmpl': temp_path,
         'noplaylist': True,
         'quiet': True,
-        'no_warnings': True,
     }
 
     try:
@@ -29,8 +38,50 @@ def download_youtube_video(url):
         return temp_path
 
     except Exception:
-        st.error("⚠️ Failed to download video. Try another link or upload manually.")
+        st.error("⚠️ Failed to download video")
         return None
+
+
+# -------------------------------
+# FRAME EXTRACTION
+# -------------------------------
+def extract_frames(video_path, max_frames=20):
+
+    cap = cv2.VideoCapture(video_path)
+    frames = []
+
+    while len(frames) < max_frames:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        frame = cv2.resize(frame, (224, 224))  # ⚠️ must match model input
+        frame = frame / 255.0
+        frames.append(frame)
+
+    cap.release()
+    return np.array(frames)
+
+
+# -------------------------------
+# PREDICTION FUNCTION
+# -------------------------------
+def predict_video(video_path):
+
+    frames = extract_frames(video_path)
+
+    if len(frames) == 0:
+        return "No frames extracted", 0
+
+    predictions = model.predict(frames, verbose=0)
+
+    avg_pred = np.mean(predictions)
+    confidence = float(avg_pred)
+
+    if avg_pred > 0.5:
+        return "FAKE", confidence
+    else:
+        return "REAL", confidence
 
 
 # -------------------------------
@@ -45,27 +96,24 @@ video_path = None
 
 
 # -------------------------------
-# FILE UPLOAD
+# UPLOAD OPTION
 # -------------------------------
 if input_method == "Upload Video File":
 
     uploaded_file = st.file_uploader("Upload a video", type=["mp4", "mov", "avi"])
 
-    if uploaded_file is not None:
+    if uploaded_file:
         tfile = tempfile.NamedTemporaryFile(delete=False)
         tfile.write(uploaded_file.read())
         video_path = tfile.name
 
 
 # -------------------------------
-# YOUTUBE INPUT
+# YOUTUBE OPTION
 # -------------------------------
 elif input_method == "YouTube Link":
 
-    yt_url = st.text_input(
-        "Paste YouTube URL here",
-        placeholder="https://youtube.com/watch?v=..."
-    )
+    yt_url = st.text_input("Paste YouTube URL")
 
     if st.button("Download Video") and yt_url:
         with st.spinner("Downloading video..."):
@@ -77,22 +125,20 @@ elif input_method == "YouTube Link":
 # -------------------------------
 if video_path:
 
-    st.success("✅ Video ready for analysis")
+    st.success("✅ Video ready")
     st.video(video_path)
 
-    # -------------------------------
-    # PLACEHOLDER FOR MODEL
-    # -------------------------------
     if st.button("Run Deepfake Detection"):
+
         with st.spinner("Analyzing video..."):
 
-            # 🔴 Replace this with your real model
-            result = "REAL"  # or FAKE from your model
+            label, confidence = predict_video(video_path)
 
-            if result == "REAL":
-                st.success("🟢 This video appears to be REAL")
+            if label == "REAL":
+                st.success(f"🟢 REAL\nConfidence: {confidence:.2f}")
+
+            elif label == "FAKE":
+                st.error(f"🔴 FAKE\nConfidence: {confidence:.2f}")
+
             else:
-                st.error("🔴 Deepfake detected!")
-
-    # Cleanup temp file after use (optional for deployment)
-    # os.remove(video_path)
+                st.warning(label)
