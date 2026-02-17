@@ -1,0 +1,7 @@
+tensorflow
+opencv-python-headless
+streamlit
+numpy
+mtcnn
+yt-dlp
+pillow
